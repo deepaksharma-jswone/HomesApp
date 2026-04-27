@@ -1,97 +1,239 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# HomesApp
 
-# Getting Started
+A production-grade React Native application built with a senior engineering mindset — every architectural decision is intentional and documented.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+---
 
-## Step 1: Start Metro
+## Tech Stack
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+| Layer          | Library                      | Why                                              |
+| -------------- | ---------------------------- | ------------------------------------------------ |
+| Framework      | React Native 0.85 (Bare CLI) | Full native control, no Expo abstractions        |
+| Language       | TypeScript                   | Catch bugs at compile time, not runtime          |
+| Navigation     | React Navigation v6          | Most mature, flexible auth flow support          |
+| Global state   | Zustand                      | Zero boilerplate, no Provider needed             |
+| Server state   | TanStack Query               | Caching, background refetch, loading states free |
+| Secure storage | react-native-keychain        | Encrypted — never AsyncStorage for tokens        |
+| Local storage  | react-native-mmkv            | 10x faster than AsyncStorage                     |
+| HTTP client    | Axios                        | Interceptors for auth token injection            |
+| Payments       | Stripe React Native SDK      | PCI compliant, App Store approved                |
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+---
 
-```sh
-# Using npm
-npm start
+## Architecture
 
-# OR using Yarn
-yarn start
+The app is built in strict layers. Each layer has one responsibility and depends only on the layer below it.
+
+```
+Screens / UI
+     ↓
+Navigation (React Navigation)
+     ↓
+State (Zustand + TanStack Query)
+     ↓
+Services (API, Auth, Payment, Storage)
+     ↓
+Infrastructure (Axios, Keychain, Stripe, MMKV)
+     ↓
+Backend / Cloud
 ```
 
-## Step 2: Build and run your app
+---
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+## Folder Structure
 
-### Android
-
-```sh
-# Using npm
-npm run android
-
-# OR using Yarn
-yarn android
+```
+src/
+├── screens/
+│   ├── auth/
+│   │   ├── SplashScreen.tsx
+│   │   ├── LoginScreen.tsx
+│   │   └── SignupScreen.tsx
+│   ├── home/
+│   │   └── HomeScreen.tsx
+│   ├── profile/
+│   │   ├── ProfileScreen.tsx
+│   │   └── EditProfileScreen.tsx
+│   ├── search/
+│   │   └── SearchScreen.tsx
+│   ├── activity/
+│   │   └── ActivityScreen.tsx
+│   └── wallet/
+│       └── WalletScreen.tsx
+├── navigation/
+│   ├── RootNavigator.tsx       ← single source of truth for all routes
+│   ├── AppNavigator.tsx        ← bottom tab navigator
+│   └── types.ts                ← all route param types
+├── components/
+│   ├── common/
+│   │   ├── Button.tsx
+│   │   ├── Input.tsx
+│   │   └── AuthGate.tsx
+│   └── layout/
+│       └── FloatingAuthButton.tsx
+├── hooks/
+│   └── useAuthGate.ts          ← wraps any action behind auth check
+├── store/
+│   └── authStore.ts            ← Zustand auth state machine
+├── services/
+│   ├── api.ts                  ← Axios instance + interceptors
+│   ├── authService.ts          ← login, signup, logout
+│   └── storageService.ts       ← MMKV wrapper
+├── utils/
+├── constants/
+│   ├── colors.ts
+│   └── routes.ts
+└── types/
+    └── user.ts
 ```
 
-### iOS
+---
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+## Navigation Architecture
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+The app uses a **three-state auth model** — not a binary logged-in/logged-out. This is the key architectural decision that makes guest mode, future suspended accounts, and trial users trivial to add.
 
-```sh
-bundle install
+```
+Auth status: 'loading' | 'guest' | 'authenticated'
 ```
 
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
+```
+RootNavigator
+  ├── status === 'loading'       → SplashScreen
+  ├── status === 'guest'         → AppNavigator (bottom tabs) + Login/Signup modals available
+  └── status === 'authenticated' → AppNavigator (bottom tabs) — Login/Signup removed from stack
 ```
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+**Why this matters:** When a user logs in, Zustand updates auth status, and React Navigation automatically removes the Login/Signup screens from the stack. No manual `navigation.navigate()` call needed after login. When logged out, the screens reappear. The navigator is a pure function of state.
 
-```sh
-# Using npm
-npm run ios
+### Bottom Tab Navigator
 
-# OR using Yarn
-yarn ios
+| Tab      | Guest access           | Authenticated access |
+| -------- | ---------------------- | -------------------- |
+| Home     | ✅ Full access         | ✅ Full access       |
+| Search   | ✅ Full access         | ✅ Full access       |
+| Activity | ✅ Read only           | ✅ Full access       |
+| Wallet   | ⛔ Gate → Login prompt | ✅ Full access       |
+| Profile  | ⛔ Gate → Login prompt | ✅ Full profile      |
+
+### Login as Modal
+
+Login and Signup slide up from the bottom (`presentation: 'modal'`). This signals to the user they haven't left the app and can swipe down to dismiss and continue browsing as a guest. This is the pattern used by Airbnb, Uber, and Instagram.
+
+---
+
+## Auth Gate Pattern
+
+Any action in the app can be gated behind authentication with a single hook:
+
+```tsx
+const withAuth = useAuthGate()
+
+<Button
+  label="Save property"
+  onPress={() => withAuth(() => saveProperty(id))}
+/>
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+- Guest taps → Login modal slides up
+- Authenticated user taps → action fires immediately
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+One hook, applied anywhere, consistent behaviour everywhere. No scattered `if (isLoggedIn)` checks across screens.
 
-## Step 3: Modify your app
+---
 
-Now that you have successfully run the app, let's make changes!
+## State Management
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+Two tools for two different kinds of state — this is a deliberate separation.
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+**Zustand** handles UI/global state: auth status, user object, theme, local UI flags. State that lives in the app, not the server.
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+**TanStack Query** handles server state: API data, loading/error states, caching, background refetching. State that lives on the server and needs to be synced.
 
-## Congratulations! :tada:
+Using one tool for both leads to either manual cache management (if you use only Zustand) or overly complex reducers (if you use only Redux).
 
-You've successfully run and modified your React Native App. :partying_face:
+---
 
-### Now what?
+## Security Decisions
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
+| Concern            | Decision                  | Why                                                    |
+| ------------------ | ------------------------- | ------------------------------------------------------ |
+| Token storage      | `react-native-keychain`   | Encrypted native keychain — AsyncStorage is plain text |
+| Access tokens      | Short-lived (15 min)      | Limits damage window if stolen                         |
+| Refresh tokens     | Long-lived (30 days)      | Stored in keychain only                                |
+| Payment processing | Server-side PaymentIntent | Secret key never touches the client                    |
+| Environment config | `react-native-config`     | API keys never hardcoded in source                     |
 
-# Troubleshooting
+---
 
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
+## Getting Started
 
-# Learn More
+### Prerequisites
 
-To learn more about React Native, take a look at the following resources:
+- Node.js 18+
+- Ruby 3.3+ (via rbenv)
+- CocoaPods
+- Xcode 15+ (iOS)
+- Android Studio (Android)
 
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+### Install
+
+```bash
+git clone https://github.com/yourusername/HomesApp.git
+cd HomesApp
+npm install
+cd ios && pod install && cd ..
+```
+
+### Environment setup
+
+```bash
+cp .env.example .env
+# Fill in your API base URL, Stripe publishable key, etc.
+```
+
+### Run
+
+```bash
+# Start Metro
+npx react-native start --reset-cache
+
+# iOS (new terminal)
+npx react-native run-ios
+
+# Android (new terminal)
+npx react-native run-android
+```
+
+---
+
+## Development Phases
+
+- [x] Phase 1 — Project scaffold, folder structure, navigation skeleton
+- [x] Phase 2 — Auth screens, Zustand store, guest gate, auth modal flow
+- [ ] Phase 3 — Screen content, tab bar icons, shared components
+- [ ] Phase 4 — API service layer, Axios interceptors, TanStack Query
+- [ ] Phase 5 — Keychain token persistence, silent token refresh
+- [ ] Phase 6 — Stripe payment integration
+- [ ] Phase 7 — Push notifications
+- [ ] Phase 8 — Production build, App Store / Play Store submission
+
+---
+
+## Key Engineering Decisions & Tradeoffs
+
+### Why Bare CLI over Expo?
+
+Full control over native code. Stripe SDK, Keychain, and MMKV all require native module linking that Expo managed workflow restricts. Tradeoff: more setup upfront, no Expo Go QR scanning.
+
+### Why Zustand over Redux?
+
+Redux Toolkit adds ~3 files of boilerplate per feature (slice, selectors, types). Zustand is one file. For a team of 1-3, Zustand's simplicity wins. Tradeoff: fewer devtools than Redux, less familiar to enterprise Redux developers.
+
+### Why TanStack Query over SWR?
+
+TanStack Query has better React Native support, more granular cache invalidation, and built-in optimistic updates. SWR is more popular in Next.js ecosystems. Tradeoff: slightly larger bundle size.
+
+### Why modal login over stack push?
+
+A pushed login screen implies the user has navigated away from where they were. A modal implies a temporary interruption. The distinction matters for conversion — users are more likely to dismiss a modal and continue browsing than to hit back from a pushed screen.
